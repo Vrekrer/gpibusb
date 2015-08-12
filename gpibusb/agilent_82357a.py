@@ -61,12 +61,29 @@ def get_devices():
 load_firmawe_on_devices()
 devices = get_devices()
 
+#TMS9914 Register Addresses
+#Read registers
+REG_INTERRUPT_STATUS_0 = 0b000
+REG_INTERRUPT_STATUS_1 = 0b001
+REG_ADDRESS_STATUS     = 0b010
+REG_BUS_STATUS         = 0b011
+REG_COMMAND_PASS_THRU  = 0b110
+REG_DATA_IN            = 0b110
+#Write registers
+REG_INTERRUPT_MASK_0  = 0b000
+REG_INTERRUPT_MASK_1  = 0b001
+REG_AUXILIARY_COMMAND = 0b011
+REG_ADDRESS           = 0b100
+REG_SERIAL_POLL       = 0b101
+REG_PARALLEL_POLL     = 0b110
+REG_DATA_OUT          = 0b111
 #Firmware Regiters
 REG_HW_CONTROL       = 0xa
 REG_LED_CONTROL      = 0xb
 REG_RESET_TO_POWERUP = 0xc
 REG_PROTOCOL_CONTROL = 0xd
 REG_FAST_TALKER_T1   = 0xe
+
 #Hardware Control Bits
 HW_NOT_TI_RESET      = 0x1
 HW_SYSTEM_CONTROLLER = 0x2
@@ -80,11 +97,42 @@ LED_FAIL_ON          = 0x20
 LED_READY_ON         = 0x40
 LED_ACCESS_ON        = 0x80
 #Reset to powerup Bits
-RESET_SPACEBALL = 0x1	# wait 2 millisec after sending
+RESET_SPACEBALL = 0x1   # wait 2 millisec after sending
 #Protocol control bits
 PROTOCOL_WRITE_COMPLETE_INTERRUPT_EN = 0x1
 
-class AGILENT_82357_Device(object):
+#Error codes
+ERR_SUCCESS          = 0
+ERR_INVALID_CMD      = 1
+ERR_INVALID_PARAM    = 2
+ERR_INVALID_REG      = 3
+ERR_GPIB_READ        = 4
+ERR_GPIB_WRITE       = 5
+ERR_FLUSHING         = 6
+ERR_FLUSHING_ALREADY = 7    
+ERR_UNSUPPORTED      = 8
+ERR_OTHER            = 9
+
+class _BusStatus(object):
+    def __init__(self, statusByte):
+        self.ATN  = bool(statusByte & 0b10000000)
+        self.DAV  = bool(statusByte & 0b01000000)
+        self.NDAC = bool(statusByte & 0b00100000)
+        self.NRFD = bool(statusByte & 0b00010000)
+        self.EOI  = bool(statusByte & 0b00001000)
+        self.SRQ  = bool(statusByte & 0b00000100)
+        self.IFC  = bool(statusByte & 0b00000010)
+        self.REN  = bool(statusByte & 0b00000001)
+    def __repr__(self):
+        lines = ['EOI', 'DAV', 'NRFD', 'NDAC',
+                 'IFC', 'SRQ', 'ATN', 'REN']
+        rep = ['GPIB Bus lines status:']
+        for l in lines:
+            rep.append(' %4s = %s' %(l, self.__dict__[l]) )
+        return '\n'.join(rep)
+        
+
+class Agilent_82357_Device(object):
     def __init__(self, USB_device):
         self.device = USB_device
         self.device.reset()
@@ -135,4 +183,8 @@ class AGILENT_82357_Device(object):
             #raise error here
             print('Error code ', response[1])
         return list(response[2:])
+
+    def lineStatus(self):
+        statusByte = self._readRegisters([REG_BUS_STATUS])[0]
+        return _BusStatus(statusByte)
 
