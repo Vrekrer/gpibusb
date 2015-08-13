@@ -77,20 +77,60 @@ REG_ADDRESS           = 0b100
 REG_SERIAL_POLL       = 0b101
 REG_PARALLEL_POLL     = 0b110
 REG_DATA_OUT          = 0b111
+#Auxiliary commands
+AUXC_RHDF = 0x02 #Release RFD holdoff
+AUXC_NBAF = 0x05 #New byte aviable false
+AUXC_FEOI = 0x08 #Send EOI with next byte
+AUXC_GTS  = 0x0B #Go to standby
+AUXC_TCA  = 0x0C #Take control asynchronously
+AUXC_TCS  = 0x0D #Take control synchronously
+AUXC_RQC  = 0x11 #Request Control
+AUXC_RLC  = 0x12 #Release Control
+AUXC_PTS  = 0x14 #Pass through next secondary
+AUXC_CLEAR_SWRST = 0x00 #Software reset
+AUXC_SET_SWRST   = 0x80
+AUXC_CLEAR_DACR  = 0x01 #Release DAC holdoff
+AUXC_SET_DACR    = 0x81
+AUXC_CLEAR_HDFA  = 0x03 #Hold on all data
+AUXC_SET_HDFA    = 0x83
+AUXC_CLEAR_HDFE  = 0x04 #Hold on EOI only
+AUXC_SET_HDFA    = 0x84
+AUXC_CLEAR_FGET  = 0x06 #Force group execute trigger
+AUXC_SET_FGET    = 0x86
+AUXC_CLEAR_RTL   = 0x07 #Return to local
+AUXC_SET_RTL     = 0x97
+AUXC_CLEAR_LON   = 0x09 #Lisen only
+AUXC_SET_LON     = 0x89 
+AUXC_CLEAR_TON   = 0x0A #Talk only
+AUXC_SET_TON     = 0x8A
+AUXC_CLEAR_RPP   = 0x0E #Request parallel poll
+AUXC_SET_RPP     = 0x8E
+AUXC_CLEAR_SIC   = 0x0F #Send interface clear
+AUXC_SET_SIC     = 0x8F
+AUXC_CLEAR_SRE   = 0x10 #Send remote enable
+AUXC_SET_SRE     = 0x90
+AUXC_CLEAR_DAI   = 0x13 #Disable all interrupts
+AUXC_SET_DAI     = 0x93
+AUXC_CLEAR_STD1  = 0x15 #Short T1 settling time
+AUXC_SET_STD1    = 0x95
+AUXC_CLEAR_SHDW  = 0x16 #Shadow handshake
+AUXC_SET_SHDW    = 0x86
+AUXC_CLEAR_VSTD1 = 0x17 #Very short T1 delay
+AUXC_SET_VSTD1   = 0x97
+AUXC_CLEAR_RSV2  = 0x18 #Request service bit 2
+AUXC_SET_RSV2    = 0x98
+
+
 #Firmware Regiters
 REG_HW_CONTROL       = 0xa
 REG_LED_CONTROL      = 0xb
 REG_RESET_TO_POWERUP = 0xc
 REG_PROTOCOL_CONTROL = 0xd
 REG_FAST_TALKER_T1   = 0xe
-
 #Hardware Control Bits
-HW_NOT_TI_RESET      = 0x1
-HW_SYSTEM_CONTROLLER = 0x2
-HW_NOT_PARALLEL_POLL = 0x4
-HW_OSCILLATOR_5V_ON  = 0x8
-HW_OUTPUT_5V_ON      = 0x20
-HW_CPLD_3V_ON        = 0x80
+HW_NOT_TI_RESET      = 0b001
+HW_SYSTEM_CONTROLLER = 0b010
+HW_NOT_PARALLEL_POLL = 0b100
 #LED Control Bits
 LED_FIRMWARE_CONTROL = 0x1
 LED_FAIL_ON          = 0x20
@@ -102,7 +142,7 @@ RESET_SPACEBALL = 0x1   # wait 2 millisec after sending
 PROTOCOL_WRITE_COMPLETE_INTERRUPT_EN = 0x1
 
 #Error codes
-ERR_SUCCESS          = 0
+ERR_SUCCESS          = 0 #No error
 ERR_INVALID_CMD      = 1
 ERR_INVALID_PARAM    = 2
 ERR_INVALID_REG      = 3
@@ -148,11 +188,35 @@ class Agilent_82357_Device(object):
             elif 'Interrupt IN' in ep.__repr__():
                 self._endpoints['Interrupt'] = ep
 
-        init_pairs = [(REG_LED_CONTROL, LED_FIRMWARE_CONTROL),
-                      (REG_RESET_TO_POWERUP, RESET_SPACEBALL)
+        self._writeRegisters([(REG_RESET_TO_POWERUP, RESET_SPACEBALL)])
+        time.sleep(0.002) #2ms delay after RESET_SPACEBALL
+
+        #clear all unwanted features of TMS9914
+        #set the T1 delay
+        #configure the address
+        #enable interrupts
+        #set interrupt masks
+        #end configuration by clearing sofware reset
+        #let the firmawere control de leds
+        REG_AUX = REG_AUXILIARY_COMMAND
+        init_pairs = [(REG_AUX, AUXC_CLEAR_DACR),
+                      (REG_AUX, AUXC_CLEAR_HDFA),
+                      (REG_AUX, AUXC_CLEAR_HDFE),
+                      (REG_AUX, AUXC_CLEAR_LON),
+                      (REG_AUX, AUXC_CLEAR_TON),
+                      (REG_AUX, AUXC_CLEAR_STD1),
+                      (REG_AUX, AUXC_CLEAR_VSTD1),
+                      (REG_AUX, AUXC_CLEAR_RSV2),
+                      (REG_FAST_TALKER_T1, 0x26), #798 ns
+                      (REG_ADDRESS, 0x00), #0x00 for controler?
+                      (REG_PROTOCOL_CONTROL, 
+                              PROTOCOL_WRITE_COMPLETE_INTERRUPT_EN),
+                      (REG_INTERRUPT_MASK_0, 0b00110000),
+                      (REG_INTERRUPT_MASK_1, 0b00000010),
+                      (REG_AUX, AUXC_CLEAR_SWRST),
+                      (REG_LED_CONTROL, LED_FIRMWARE_CONTROL)
                      ]
         self._writeRegisters(init_pairs)
-        time.sleep(0.1)
 
     def _writeRegisters(self, pairs_reg_data, timeout = 100):
         #timeout in ms
@@ -184,7 +248,42 @@ class Agilent_82357_Device(object):
             print('Error code ', response[1])
         return list(response[2:])
 
+    @property
     def lineStatus(self):
         statusByte = self._readRegisters([REG_BUS_STATUS])[0]
         return _BusStatus(statusByte)
 
+    def requestSystemControl(self, control):
+        HW_C_bits = self._readRegisters([REG_HW_CONTROL])[0]
+        regs = [REG_AUXILIARY_COMMAND, REG_HW_CONTROL]
+        if control:
+            vals = [AUXC_RQC, HW_C_bits | HW_SYSTEM_CONTROLLER]
+        else:
+            vals = [AUXC_RLC, HW_C_bits & (0xFF - HW_SYSTEM_CONTROLLER)]
+        reg_pairs = zip(regs, vals)
+        self._writeRegisters(reg_pairs)
+    
+    def takeControl(self, async = True):
+        if async:
+            TC_mode = AUXC_TCA
+        else:
+            TC_mode = AUXC_TCS
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, TC_mode)])
+
+    def goToStandby(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_GTS)])
+        
+    @property
+    def T1_delay(self):
+        NANOSEC_PER_BIT = 21.0
+        T1_byte = self._readRegisters([REG_FAST_TALKER_T1])[0]
+        return T1_byte*NANOSEC_PER_BIT
+    @T1_delay.setter
+    def T1_delay(self, T1):
+        NANOSEC_PER_BIT = 21.0
+        MAX_VALUE = 0x72*0 + 255
+        MIN_VALUE = 0x11*0
+        T1_byte = int(T1/NANOSEC_PER_BIT + 0.5)
+        T1_byte = max(T1_byte, MIN_VALUE)
+        T1_byte = min(T1_byte, MAX_VALUE)
+        self._writeRegisters([(REG_FAST_TALKER_T1, T1_byte)])
