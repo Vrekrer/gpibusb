@@ -128,14 +128,14 @@ REG_RESET_TO_POWERUP = 0xc
 REG_PROTOCOL_CONTROL = 0xd
 REG_FAST_TALKER_T1   = 0xe
 #Hardware Control Bits
-HW_NOT_TI_RESET      = 0b001
-HW_SYSTEM_CONTROLLER = 0b010
-HW_NOT_PARALLEL_POLL = 0b100
+HW_NOT_TI_RESET      = 1<<0
+HW_SYSTEM_CONTROLLER = 1<<1
+HW_NOT_PARALLEL_POLL = 1<<2
 #LED Control Bits
-LED_FIRMWARE_CONTROL = 0x1
-LED_FAIL_ON          = 0x20
-LED_READY_ON         = 0x40
-LED_ACCESS_ON        = 0x80
+LED_FIRMWARE_CONTROL = 1<<0
+LED_FAIL_ON          = 1<<5
+LED_READY_ON         = 1<<6
+LED_ACCESS_ON        = 1<<7
 #Reset to powerup Bits
 RESET_SPACEBALL = 0x1   # wait 2 millisec after sending
 #Protocol control bits
@@ -153,16 +153,22 @@ ERR_FLUSHING_ALREADY = 7
 ERR_UNSUPPORTED      = 8
 ERR_OTHER            = 9
 
+#USB 'Bulk OUT' endpoint registers
+USB_REG_WRITE_DATA = 0x01
+USB_REG_READ_DATA  = 0x03
+USB_REG_WRITE_REGS = 0x04
+USB_REG_READ_REGS  = 0x05
+
 class _BusStatus(object):
     def __init__(self, statusByte):
-        self.ATN  = bool(statusByte & 0b10000000)
-        self.DAV  = bool(statusByte & 0b01000000)
-        self.NDAC = bool(statusByte & 0b00100000)
-        self.NRFD = bool(statusByte & 0b00010000)
-        self.EOI  = bool(statusByte & 0b00001000)
-        self.SRQ  = bool(statusByte & 0b00000100)
-        self.IFC  = bool(statusByte & 0b00000010)
-        self.REN  = bool(statusByte & 0b00000001)
+        self.ATN  = bool(statusByte & (1<<7) )
+        self.DAV  = bool(statusByte & (1<<6) )
+        self.NDAC = bool(statusByte & (1<<5) )
+        self.NRFD = bool(statusByte & (1<<4) )
+        self.EOI  = bool(statusByte & (1<<3) )
+        self.SRQ  = bool(statusByte & (1<<2) )
+        self.IFC  = bool(statusByte & (1<<1) )
+        self.REN  = bool(statusByte & (1<<0) )
     def __repr__(self):
         lines = ['EOI', 'DAV', 'NRFD', 'NDAC',
                  'IFC', 'SRQ', 'ATN', 'REN']
@@ -220,59 +226,112 @@ class Agilent_82357_Device(object):
 
     def _writeRegisters(self, pairs_reg_data, timeout = 100):
         #timeout in ms
-        WRITE_REGS = 0x04
-        header = [WRITE_REGS, len(pairs_reg_data)]
+        header = [USB_REG_WRITE_REGS, len(pairs_reg_data)]
         unpacked_pairs = list(sum(pairs_reg_data, ()))
         data = header + unpacked_pairs
         self._endpoints['Bulk OUT'].write(data, timeout)
         response = self._endpoints['Bulk IN'].read(32, timeout)
-        if response[0] != 0xFF - WRITE_REGS:
+        if response[0] != 0xFF - USB_REG_WRITE_REGS:
             #raise error here
-            print('Bad ~WRITE_REGS')
+            print('Bad ~USB_REG_WRITE_REGS')
         if response[1] != 0:
             #raise error here
             print('Error code ', response[1])
             
     def _readRegisters(self, registers, timeout = 100):
         #timeout in ms
-        READ_REGS = 0x05
-        header = [READ_REGS, len(registers)]
+        header = [USB_REG_READ_REGS, len(registers)]
         data = header + list(registers)
         self._endpoints['Bulk OUT'].write(data, timeout)
         response = self._endpoints['Bulk IN'].read(32, timeout)
-        if response[0] != 0xFF - READ_REGS:
+        if response[0] != 0xFF - USB_REG_READ_REGS:
             #raise error here
-            print('Bad ~READ_REGS', response[0])
+            print('Bad ~USB_REG_READ_REGS', response[0])
         if response[1] != 0:
             #raise error here
             print('Error code ', response[1])
         return list(response[2:])
-
-    @property
-    def lineStatus(self):
-        statusByte = self._readRegisters([REG_BUS_STATUS])[0]
-        return _BusStatus(statusByte)
-
-    def requestSystemControl(self, control):
-        HW_C_bits = self._readRegisters([REG_HW_CONTROL])[0]
-        regs = [REG_AUXILIARY_COMMAND, REG_HW_CONTROL]
-        if control:
-            vals = [AUXC_RQC, HW_C_bits | HW_SYSTEM_CONTROLLER]
-        else:
-            vals = [AUXC_RLC, HW_C_bits & (0xFF - HW_SYSTEM_CONTROLLER)]
-        reg_pairs = zip(regs, vals)
-        self._writeRegisters(reg_pairs)
     
-    def takeControl(self, async = True):
-        if async:
-            TC_mode = AUXC_TCA
-        else:
-            TC_mode = AUXC_TCS
-        self._writeRegisters([(REG_AUXILIARY_COMMAND, TC_mode)])
-
-    def goToStandby(self):
-        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_GTS)])
+    ###Read and write as in linux-gbpi, but they does not work###
+    #~ def read(self, length = 1024, 
+             #~ primaryAddress =0, 
+             #~ secondaryAddress = 0, 
+             #~ timeout = 100, 
+             #~ end_on_eoi = True, 
+             #~ no_address = False, 
+             #~ on_eos_char = True, 
+             #~ spoll = False):
+        #~ #ReadFlags
+        #~ END_ON_EOI = 0x1,
+        #~ NO_ADDRESS = 0x2,
+        #~ ON_EOS_CHAR = 0x4,
+        #~ SPOLL = 0x8
+        #~ readFlags = (  end_on_eoi <<0 
+                     #~ + no_address <<1 
+                     #~ + on_eos_char<<2 
+                     #~ + spoll      <<3)
+        #~ header = [USB_REG_READ_DATA, 
+                  #~ primaryAddress, 
+                  #~ secondaryAddress, 
+                  #~ readFlags,
+                  #~ (length >>  0) & 0xFF, 
+                  #~ (length >>  8) & 0xFF,
+                  #~ (length >> 16) & 0xFF,
+                  #~ (length >> 24) & 0xFF]
+        #~ self._endpoints['Bulk OUT'].write(header, timeout)
+        #~ response = self._endpoints['Bulk IN'].read(length, timeout)
+        #~ if response[0] != 0xFF - USB_REG_READ_DATA:
+            #~ #raise error here
+            #~ print('Bad ~USB_REG_READ_DATA', response[0])
+        #~ if response[1] != 0:
+            #~ #raise error here
+            #~ print('Error code ', response[1])
+        #~ return list(response[2:])
+        #~ #Read Trailing Flags
+        #~ EOI = 0x1,
+        #~ ATN = 0x2,
+        #~ IFC = 0x4,
+        #~ EOS = 0x8,
+        #~ ABORT = 0x10,
+        #~ COUNT = 0x20,
+        #~ DEAD_BUS = 0x40,
+        #~ UNADDRESSED = 0x80
+    #~ def write(self, message,
+              #~ primaryAddress =0, 
+              #~ secondaryAddress = 0, 
+              #~ timeout = 100, 
+              #~ writeFlags = 0b00001011):
+                  
+        #~ #Write Flags
+        #~ SEND_EOI = 0x1,
+        #~ NO_FAST_TALKER_FIRST_BYTE = 0x2,
+        #~ NO_FAST_TALKER = 0x4,
+        #~ NO_ADDRESS = 0x8,
+        #~ ATN = 0x10,
+        #~ SEPARATE_HEADER = 0x80
         
+        #~ length = len(message)
+        #~ header = [USB_REG_WRITE_DATA, 
+                  #~ primaryAddress, 
+                  #~ secondaryAddress, 
+                  #~ writeFlags,
+                  #~ (length >>  0) & 0xFF, 
+                  #~ (length >>  8) & 0xFF,
+                  #~ (length >> 16) & 0xFF,
+                  #~ (length >> 24) & 0xFF]
+        #~ data = header + map(ord, message)
+        #~ self.data = data
+        #~ return data
+        #~ self._endpoints['Bulk OUT'].write(data, timeout)
+        #~ time.sleep(0.1)
+        #~ response = self._endpoints['Bulk IN'].read(32, timeout)
+        #~ if response[0] != 0xFF - USB_REG_WRITE_DATA:
+            #~ #raise error here
+            #~ print('Bad ~USB_REG_WRITE_DATA')
+        #~ if response[1] != 0:
+            #~ #raise error here
+            #~ print('Error code ', response[1])
+
     @property
     def T1_delay(self):
         NANOSEC_PER_BIT = 21.0
@@ -287,3 +346,31 @@ class Agilent_82357_Device(object):
         T1_byte = max(T1_byte, MIN_VALUE)
         T1_byte = min(T1_byte, MAX_VALUE)
         self._writeRegisters([(REG_FAST_TALKER_T1, T1_byte)])
+
+    @property
+    def busStatus(self):
+        statusByte = self._readRegisters([REG_BUS_STATUS])[0]
+        return _BusStatus(statusByte)
+
+    def requestControl(self):
+        HW_C_bits = self._readRegisters([REG_HW_CONTROL])[0]
+        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_RQC),
+                     (REG_HW_CONTROL, HW_C_bits | HW_SYSTEM_CONTROLLER)]
+        self._writeRegisters(reg_pairs)
+    
+    def releaseControl(self):
+        HW_C_bits = self._readRegisters([REG_HW_CONTROL])[0]
+        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_RLC),
+                     (REG_HW_CONTROL, 
+                         HW_C_bits & (0xFF - HW_SYSTEM_CONTROLLER))]
+        self._writeRegisters(reg_pairs)
+
+    def takeControl(self, async = True):
+        if async:
+            TC_mode = AUXC_TCA
+        else:
+            TC_mode = AUXC_TCS
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, TC_mode)])
+
+    def goToStandby(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_GTS)])
