@@ -423,32 +423,25 @@ class Agilent_82357_Device(object):
         self.requestControl()
         self.clearInterface()
         self.enableRemote()
-        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_CLEAR_TON),
-                     (REG_AUXILIARY_COMMAND, AUXC_CLEAR_LON)]
-        self._writeRegisters(reg_pairs)
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_TON)])
 
     def setUpListener(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_LON)])
         self.goToStandby()
-        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_CLEAR_TON),
-                     (REG_AUXILIARY_COMMAND, AUXC_SET_LON)]
-        self._writeRegisters(reg_pairs)
     
     def setUpTalker(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_TON)])
         self.goToStandby()
-        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_SET_TON),
-                     (REG_AUXILIARY_COMMAND, AUXC_CLEAR_LON)]
-        self._writeRegisters(reg_pairs)
 
     def sendCommand(self, command_byte):
         self.takeControl()
         self._writeRegisters([(REG_DATA_OUT, command_byte)])
         
     def _sendByte(self, byte, eoi):
+        reg_pairs = [(REG_DATA_OUT, byte)]
         if eoi:
-            self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_FEOI),
-                                  (REG_DATA_OUT, byte)])
-        else:
-            self._writeRegisters([(REG_DATA_OUT, byte)])
+            reg_pairs.insert(0, (REG_AUXILIARY_COMMAND, AUXC_FEOI))
+        self._writeRegisters(reg_pairs)
             
     def _waitReadyForData(self):
         while self.busStatus.NRFD:
@@ -484,9 +477,8 @@ class Agilent_82357_Device(object):
         MTA_BASE = 0x40
         UNT = 0x5F
         
-        self.setUpListener()
         self.sendCommand(MTA_BASE + address)
-        self.goToStandby()
+        self.setUpListener()
         message = [ self._getByte() ]
         self._clearHoldoff()
         while self.busStatus.NRFD:
