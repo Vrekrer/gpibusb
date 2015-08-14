@@ -154,10 +154,36 @@ ERR_UNSUPPORTED      = 8
 ERR_OTHER            = 9
 
 #USB 'Bulk OUT' endpoint registers
-USB_REG_WRITE_DATA = 0x01
-USB_REG_READ_DATA  = 0x03
+USB_REG_WRITE_DATA = 0x01 #Does not seem to work
+USB_REG_READ_DATA  = 0x03 #Does not seem to work
 USB_REG_WRITE_REGS = 0x04
 USB_REG_READ_REGS  = 0x05
+
+class _interruptStatusRegister(object):
+    def __init__(self, statusBytes):
+        self.INT0  = bool(statusBytes[0] & (1<<7) )
+        self.INT1  = bool(statusBytes[0] & (1<<6) )
+        self.BI    = bool(statusBytes[0] & (1<<5) )
+        self.BO    = bool(statusBytes[0] & (1<<4) )
+        self.END   = bool(statusBytes[0] & (1<<3) )
+        self.SPAS  = bool(statusBytes[0] & (1<<2) )
+        self.RLC   = bool(statusBytes[0] & (1<<1) )
+        self.MAC   = bool(statusBytes[0] & (1<<0) )
+        self.GET   = bool(statusBytes[1] & (1<<7) )
+        self.ERR   = bool(statusBytes[1] & (1<<6) )
+        self.UNC   = bool(statusBytes[1] & (1<<5) )
+        self.APT   = bool(statusBytes[1] & (1<<4) )
+        self.DCAS  = bool(statusBytes[1] & (1<<3) )
+        self.MA    = bool(statusBytes[1] & (1<<2) )
+        self.SRQ   = bool(statusBytes[1] & (1<<1) )
+        self.IFC   = bool(statusBytes[1] & (1<<0) )
+    def __repr__(self):
+        bits = ['INT0', 'INT1', 'BI', 'BO', 'END', 'SPAS', 'RLC', 'MAC',
+                'GET', 'ERR', 'UNC', 'APT', 'DCAS', 'MA', 'SRQ', 'IFC']
+        rep = ['Interrupt Status Register bits:']
+        for l in bits:
+            rep.append(' %4s = %s' %(l, self.__dict__[l]) )
+        return '\n'.join(rep)
 
 class _BusStatus(object):
     def __init__(self, statusByte):
@@ -215,10 +241,13 @@ class Agilent_82357_Device(object):
                       (REG_AUX, AUXC_CLEAR_RSV2),
                       (REG_FAST_TALKER_T1, 0x26), #798 ns
                       (REG_ADDRESS, 0x00), #0x00 for controler?
-                      (REG_PROTOCOL_CONTROL, 
-                              PROTOCOL_WRITE_COMPLETE_INTERRUPT_EN),
-                      (REG_INTERRUPT_MASK_0, 0b00110000),
-                      (REG_INTERRUPT_MASK_1, 0b00000010),
+                      #(REG_PROTOCOL_CONTROL, 
+                      #        PROTOCOL_WRITE_COMPLETE_INTERRUPT_EN),
+                      #(REG_INTERRUPT_MASK_0, 0b00110000),
+                      #(REG_INTERRUPT_MASK_1, 0b00000010),
+                      (REG_PROTOCOL_CONTROL, 0),
+                      (REG_INTERRUPT_MASK_0, 0b00000000),
+                      (REG_INTERRUPT_MASK_1, 0b00000000),
                       (REG_AUX, AUXC_CLEAR_SWRST),
                       (REG_LED_CONTROL, LED_FIRMWARE_CONTROL)
                      ]
@@ -320,8 +349,6 @@ class Agilent_82357_Device(object):
                   #~ (length >> 16) & 0xFF,
                   #~ (length >> 24) & 0xFF]
         #~ data = header + map(ord, message)
-        #~ self.data = data
-        #~ return data
         #~ self._endpoints['Bulk OUT'].write(data, timeout)
         #~ time.sleep(0.1)
         #~ response = self._endpoints['Bulk IN'].read(32, timeout)
@@ -351,6 +378,12 @@ class Agilent_82357_Device(object):
     def busStatus(self):
         statusByte = self._readRegisters([REG_BUS_STATUS])[0]
         return _BusStatus(statusByte)
+        
+    @property
+    def interruptStatusRegister(self):
+        statusBytes = self._readRegisters([REG_INTERRUPT_STATUS_0,
+                                           REG_INTERRUPT_STATUS_1])
+        return _interruptStatusRegister(statusBytes)
 
     def requestControl(self):
         HW_C_bits = self._readRegisters([REG_HW_CONTROL])[0]
@@ -374,3 +407,93 @@ class Agilent_82357_Device(object):
 
     def goToStandby(self):
         self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_GTS)])
+
+    #Controler routines
+    def clearInterface(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_SIC)])
+        time.sleep(0.150)
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_CLEAR_SIC)])
+        
+    def enableRemote(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_SRE)])
+    def disableRemote(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_SET_SRE)])
+
+    def setUpSystemControler(self):
+        self.requestControl()
+        self.clearInterface()
+        self.enableRemote()
+        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_CLEAR_TON),
+                     (REG_AUXILIARY_COMMAND, AUXC_CLEAR_LON)]
+        self._writeRegisters(reg_pairs)
+
+    def setUpListener(self):
+        self.goToStandby()
+        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_CLEAR_TON),
+                     (REG_AUXILIARY_COMMAND, AUXC_SET_LON)]
+        self._writeRegisters(reg_pairs)
+    
+    def setUpTalker(self):
+        self.goToStandby()
+        reg_pairs = [(REG_AUXILIARY_COMMAND, AUXC_SET_TON),
+                     (REG_AUXILIARY_COMMAND, AUXC_CLEAR_LON)]
+        self._writeRegisters(reg_pairs)
+
+    def sendCommand(self, command_byte):
+        self.takeControl()
+        self._writeRegisters([(REG_DATA_OUT, command_byte)])
+        
+    def _sendByte(self, byte, eoi):
+        if eoi:
+            self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_FEOI),
+                                  (REG_DATA_OUT, byte)])
+        else:
+            self._writeRegisters([(REG_DATA_OUT, byte)])
+            
+    def _waitReadyForData(self):
+        while self.busStatus.NRFD:
+            time.sleep(100E-6)
+            #Add timeout here
+        
+    def write(self, address, message, eoi = True, unlisten = True):
+        MLA_BASE = 0x20
+        UNL = 0x3F
+        if isinstance(message, str):
+            message = map(ord, message)
+        lastByte = len(message) - 1
+            
+        self.sendCommand(MLA_BASE + address)
+        self.setUpTalker()
+        
+        for byte in message[:-1]:
+            self._waitReadyForData()
+            self._sendByte(byte, eoi=False)
+        self._waitReadyForData()
+        self._sendByte(message[-1], eoi)
+        if unlisten:
+            self._waitReadyForData()
+            self.sendCommand(UNL)
+
+    def _clearHoldoff(self):
+        self._writeRegisters([(REG_AUXILIARY_COMMAND, AUXC_RHDF)])
+
+    def _getByte(self):
+         return self._readRegisters([(REG_DATA_IN)])[0]
+
+    def read(self, address, untalk = True):
+        MTA_BASE = 0x40
+        UNT = 0x5F
+        
+        self.setUpListener()
+        self.sendCommand(MTA_BASE + address)
+        self.goToStandby()
+        message = [ self._getByte() ]
+        self._clearHoldoff()
+        while self.busStatus.NRFD:
+            message.append( self._getByte() )
+            self._clearHoldoff()
+        if untalk:
+            self.sendCommand(UNT)
+        return str(bytearray(message))
+        
+
